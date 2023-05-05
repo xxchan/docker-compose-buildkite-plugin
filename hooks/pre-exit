@@ -1,6 +1,8 @@
 #!/bin/bash
 set -ueo pipefail
 
+echo "~~~ :docker: Running pre-exit hook"
+
 DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
 # shellcheck source=lib/shared.bash
