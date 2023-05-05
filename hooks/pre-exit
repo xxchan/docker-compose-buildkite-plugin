@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ueo pipefail
 
-echo "~~~ :docker: Running pre-exit hook"
+echo "Running docker-compose pre-exit hook"
 
 DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
