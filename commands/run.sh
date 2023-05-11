@@ -410,6 +410,7 @@ set +e
 )
 
 exitcode=$?
+echo "+++ :docker: run_docker_compose finished"
 
 # Restore -e as an option.
 set -e
