@@ -112,6 +112,19 @@ if [[ "$(plugin_read_config PROPAGATE_ENVIRONMENT "false")" =~ ^(true|on|1)$ ]] 
   fi
 fi
 
+# If requested, propagate a set of env vars as listed in a given env var to the
+# container.
+if [[ -n "$(plugin_read_config ENV_PROPAGATION_LIST)" ]]; then
+  env_propagation_list_var="$(plugin_read_config ENV_PROPAGATION_LIST)"
+  if [[ -z "${!env_propagation_list_var:-}" ]]; then
+    echo -n "env-propagation-list desired, but ${env_propagation_list_var} is not defined!"
+    exit 1
+  fi
+  for var in ${!env_propagation_list_var}; do
+    run_params+=("-e" "$var")
+  done
+fi
+
 while IFS=$'\n' read -r vol ; do
   [[ -n "${vol:-}" ]] && run_params+=("-v" "$(expand_relative_volume_path "$vol")")
 done <<< "$(plugin_read_list VOLUMES)"
@@ -258,7 +271,12 @@ fi
 
 run_params+=("$run_service")
 
-build_params=(--pull)
+build_params=()
+
+# Only pull if SKIP_PULL is not true
+if [[ ! "$(plugin_read_config SKIP_PULL "false")" == "true" ]] ; then
+  build_params+=(--pull)
+fi
 
 if [[ "$(plugin_read_config NO_CACHE "false")" == "true" ]] ; then
   build_params+=(--no-cache)
@@ -291,6 +309,10 @@ up_params+=("up")  # this ensures that the array has elements to avoid issues wi
 
 if [[ "$(plugin_read_config WAIT "false")" == "true" ]] ; then
   up_params+=("--wait")
+fi
+
+if [[ "$(plugin_read_config QUIET_PULL "false")" == "true" ]] ; then
+  up_params+=("--quiet-pull")
 fi
 
 dependency_exitcode=0
@@ -400,22 +422,37 @@ elif [[ ${#command[@]} -gt 0 ]] ; then
   done
 fi
 
-# Disable -e outside of the subshell; since the subshell returning a failure
-# would exit the parent shell (here) early.
-set +e
+ensure_stopped() {
+  echo '+++ :warning: Signal received, stopping container'
+  docker stop "${container_name}" || true
+  echo '~~~ Last log lines that may be missing above (if container was not already removed)'
+  docker logs "${container_name}" || true
+  exitcode='TRAP'
+}
 
-(
-  echo "+++ :docker: Running ${display_command[*]:-} in service $run_service" >&2
+trap ensure_stopped SIGINT SIGTERM SIGQUIT
+
+if [[ "${BUILDKITE_PLUGIN_DOCKER_COMPOSE_COLLAPSE_RUN_LOG_GROUP:-false}" = "true" ]]; then
+  group_type="---"
+else
+  group_type="+++"
+fi
+# Disable -e to prevent cancelling step if the command fails for whatever reason
+set +e
+( # subshell is necessary to trap signals (compose v2 fails to stop otherwise)
+  echo "${group_type} :docker: Running ${display_command[*]:-} in service $run_service" >&2
   run_docker_compose "${run_params[@]}"
 )
-
 exitcode=$?
 echo "+++ :docker: run_docker_compose finished"
 
 # Restore -e as an option.
 set -e
 
-if [[ $exitcode -ne 0 ]] ; then
+if [[ $exitcode = "TRAP" ]]; then
+  # command failed due to cancellation signal, make sure there is an error but no further output
+  exitcode=-1
+elif [[ $exitcode -ne 0 ]] ; then
   echo "^^^ +++"
   echo "+++ :warning: Failed to run command, exited with $exitcode, run params:"
   echo "${run_params[@]}"
@@ -429,4 +466,4 @@ if [[ -n "${BUILDKITE_AGENT_ACCESS_TOKEN:-}" ]] ; then
   fi
 fi
 
-return $exitcode
+return "$exitcode"
